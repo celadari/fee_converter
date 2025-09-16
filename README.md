@@ -1,284 +1,163 @@
-# KwickBit Payment Processor – Soroban Smart Contract
-
-This repository contains all necessary code, scripts, and CI configuration to **deploy and manage the KwickBit Payment Processor smart contract on Stellar Soroban** across both **Testnet** and **Mainnet**.
-
----
-
-## Contents
-
-- `src/lib.rs`  
-  Main Soroban contract (with royalty, ERC-20 support, and approvals).
-- `scripts/pay_through_payment_processor.ts`  
-  TypeScript script that triggers the smart contract to make a payment.
-- `.github/workflows/...`  
-  GitHub Actions for multi-network deployment and contract address export to Google Secret Manager.
-- `.github/actions/deploy-soroban-contract-and-export-sc-address/`  
-  Composite GitHub Action to deploy + export the deployed address as GCP secrets.
-
-  
-```typescript
-// ONLY ONCE
-     caller trustline
-    await sponsorAndCreateTrustline({
-        horizonUrl: 'https://horizon-testnet.stellar.org',
-        networkPassphrase,
-        backend: backendKeypair,     // sponsor/payer
-        userPub: callerG,            // G... of the user
-        userSigner: async (xdr: string): Promise<string> => {
-            // Re-hydrate the tx from XDR
-            const tx = TransactionBuilder.fromXDR(xdr, networkPassphrase);
-
-            // If it’s a fee bump, sign the inner tx; else sign the tx directly
-            if (tx instanceof FeeBumpTransaction) {
-                tx.innerTransaction.sign(userKeyPair);
-                return tx.toXDR();
-            } else {
-                tx.sign(userKeyPair);
-                return tx.toXDR();
-            }
-
-            // If you prefer to ignore fee-bumps during testing:
-             (tx as any).sign(userKeyPair); return (tx as any).toXDR();
-        },
-
-        code: USDC_CODE,
-        issuer: USDC_ISSUER,
-    });
-     recipient trustline (if needed)
-    await sponsorAndCreateTrustline({
-        horizonUrl: 'https://horizon-testnet.stellar.org',
-        networkPassphrase,
-        backend: backendKeypair,
-        userPub: recipientG,
-        userSigner: async (xdr: string): Promise<string> => {
-            // Re-hydrate the tx from XDR
-            const tx = TransactionBuilder.fromXDR(xdr, networkPassphrase);
-
-            // If it’s a fee bump, sign the inner tx; else sign the tx directly
-            if (tx instanceof FeeBumpTransaction) {
-                tx.innerTransaction.sign(recipientKeypair);
-                return tx.toXDR();
-            } else {
-                tx.sign(recipientKeypair);
-                return tx.toXDR();
-            }
-
-            // If you prefer to ignore fee-bumps during testing:
-            (tx as any).sign(userKeyPair); return (tx as any).toXDR();
-        },
-
-        code: USDC_CODE,
-        issuer: USDC_ISSUER,
-    });
-```
-
-
----
-
-## Prerequisites for Local Development
-
-1. **Install system dependencies**
-
-```sh
-sudo apt-get update
-sudo apt-get install -y \
-  build-essential \
-  pkg-config \
-  libudev-dev \
-  libdbus-1-dev \
-  libhidapi-dev
-```
-
-2. **Install Rust (right version)**
-
-```sh
-rustup self update
-rustup toolchain install 1.89.0
-rustup default 1.89.0
-```
-
-3. **Install Rust target dependencies**
-
-```sh
-rustup target add wasm32-unknown-unknown
-rustup target add wasm32v1-none
-```
+# Gasolina – Gas-abstraction SDK for Soroban
+![Logo](./gasolina_logo.png)
 
-4. **Install stellar-cli**
+## What problem does this tackle?
 
-```sh
-cargo install --locked stellar-cli
-```
+1. **Paying gas for users**  
+   Apps/wallets often sponsor fees so UX stays smooth. But sponsorship:
+    - increases attack surface,
+    - forces the app to constantly monitor & top up its XLM balance.
 
----
+2. **No common framework**  
+   Every project re-implements a bespoke solution from scratch.
 
-## Get USDC Contract Address
+3. **Soroban is trickier than Stellar Classic**  
+   Classic sponsorship is “relatively” simple. In Soroban, a transaction with a contract invocation can only contain **one** such operation, so composing multiple actions requires an indirection.
 
-- **Mainnet:**  
-  `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`  
-  <https://stellar.expert/explorer/public/contract/CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75>
+## Solution
 
-- **Testnet:**  
-  `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA`  
-  <https://stellar.expert/explorer/testnet/contract/CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA>
+**Gasolina** is a tiny SDK that lets apps (wallets, DEXes, etc.) **prepay** gas and get **refunded immediately** in the same flow.
 
-```sh
-USDC_TOKEN_CONTRACT_ID=...
-```
+- The **user signs once** (no extra prompts) and sends the signed *authorization entry* to the backend (relayer/payer).
+- The **backend** submits the transaction on-chain and receives a refund (e.g., in USDC) via a bundled call.
 
----
+Because Soroban allows only one invoke op per transaction, we use **RouterV1** to bundle calls:
+- RouterV1 repo: <https://github.com/Creit-Tech/Stellar-Router-Contract/tree/main/contracts/router-v1/src>
 
-## Import Keys
+In this hackathon demo we use two inner calls:
+1. **Soroswap** `swap_tokens_for_exact_tokens` to buy the required XLM for gas using USDC and **pay it to the relayer** (refund).
+2. **USDC token** `transfer` to send user-intended funds to a recipient.
 
-1. Fetch keys from Proton Safe `Super secret - Charly and Tommy`:
-    - Admin Stellar – KwickBit [public only]
-    - Royalty Recipient Stellar – KwickBit [public only]
-    - Approver Stellar – KwickBit [secret]
-    - Deployer Stellar – KwickBit [secret]
+> The same pattern generalizes: users can interact with contracts while paying fees in USDC instead of XLM.
 
-2. Import them using `stellar-cli`:
+## How it works (4 steps)
 
-```sh
-stellar keys add --public-key <PUBLIC_KEY_ADMIN> admin
-stellar keys add --public-key <PUBLIC_KEY_RECIPIENT> recipient
-```
+1. **Frontend** builds a RouterV1 op that wraps two calls:  
+   `[ swap_usdc_to_xlm_and_pay_back_backend, transfer ]`, then sends it to the backend.
+2. **Backend** simulates the draft transaction to discover `required_auth`, and returns the user’s **unsigned** auth entry.
+3. **Frontend** has the user **sign the auth entry** (not the transaction) and sends it back.
+4. **Backend** rebuilds the op **with signed auth**, assembles resource footprint/fees, signs the transaction as payer, and submits.
 
-```sh
-stellar keys add --secret-key <APPROVER_SECRET> approver
-stellar keys add --secret-key <DEPLOYER_SECRET> deployer
-```
+**UX note:** The user **signs only once** — it feels like a normal single-sign flow.
 
-3. Generate merchant and payer accounts (testnet only):
+## How to simply run?
 
-```sh
-stellar keys generate merchant --network testnet --fund
-stellar keys generate payer --network testnet --fund
-```
+You can use **pnpm** or **npm**. No environment variables needed — demo input parameters are **hardcoded** to make the script easy to run.
 
-4. Export addresses and secrets:
+**Using pnpm:**
 
-```sh
-MERCHANT_ADDRESS=$(stellar keys public-key merchant)
-ADMIN_ADDRESS=$(stellar keys public-key admin)
-APPROVER_ADDRESS=$(stellar keys public-key approver)
-RECIPIENT_ADDRESS=$(stellar keys public-key recipient)
-```
-
-```sh
-APPROVER_SECRET=$(stellar keys secret approver)
-PAYER_SECRET=$(stellar keys secret payer)
-DEPLOYER_SECRET=$(stellar keys secret deployer)
-```
-
-5. Verify:
-
-```sh
-stellar keys ls
-```
-
----
-
-## Add USDC Trustline (merchant & payer)
-
-```sh
-stellar tx new change-trust \
-  --network testnet \
-  --source-account merchant \
-  --line USDC:$USDC_TOKEN_CONTRACT_ID \
-  --build-only \
-  | stellar tx sign --network testnet --sign-with-key merchant \
-  | stellar tx send --network testnet
-```
-
-```sh
-stellar tx new change-trust \
-  --network testnet \
-  --source-account payer \
-  --line USDC:$USDC_TOKEN_CONTRACT_ID \
-  --build-only \
-  | stellar tx sign --network testnet --sign-with-key payer \
-  | stellar tx send --network testnet
-```
-
----
-
-## Fund USDC (testnet only)
-
-Use the Circle faucet: <https://faucet.circle.com/>
-
----
-
-## Get Contract Address
-
-**Option A (Recommended):**  
-Fetch from GCP Secret Manager in environment `kb-cloud-env-dev`:
-- `ADDRESS_STELLAR_TESTNET_PAYMENT_PROCESSOR`
-- `ADDRESS_STELLAR_MAINNET_PAYMENT_PROCESSOR`
-
-```sh
-CONTRACT_ID=...
-```
-
-**Option B (Not recommended):**  
-Deploy locally (see deployment section below).
-
----
-
-## Build the Contract
-
-```sh
-stellar contract build
-```
-
----
-
-## Deployment
-
-### A) Recommended: CI/CD
-
-Deployment is automated via GitHub Actions:
-- Choose environment (`dev`, `staging`, `prod`)
-- Select network (`testnet`, `mainnet`)
-- Contract is built, deployed, and address exported to Google Secret Manager
-
-### B) Local Development Only
-
-1. **Deploy**
-
-```sh
-stellar contract deploy \
-  --wasm target/wasm32v1-none/release/kwickbit_payment_processor.wasm \
-  --network testnet \
-  --alias "kwickbit_contract_testnet" \
-  --source-account $DEPLOYER_SECRET
-DEPLOYED_SMART_CONTRACT_ID=$(stellar contract alias show "kwickbit_contract_testnet"   --network testnet | tail -n1)
-echo "Deployed contract ID: $DEPLOYED_SMART_CONTRACT_ID"
-```
-
-2. **Initialize**
-
-```sh
-stellar contract invoke \
-  --id $DEPLOYED_SMART_CONTRACT_ID \
-  --source-account deployer \
-  --network testnet \
-  -- \
-  init \
-  --admin "$ADMIN_ADDRESS" \
-  --approver "$APPROVER_ADDRESS" \
-  --royalty-bps 200 \
-  --royalty-recipient "$RECIPIENT_ADDRESS"
-```
-
----
-
-## Interact with the Contract
-
-Before interacting, make sure dependencies are installed:
-
-```sh
+```bash
 pnpm install
-pnpm run pay-with-kwickbit
+pnpm exec ts-node scripts/sdk.ts
 ```
 
-This runs `scripts/pay_through_payment_processor.ts`, which executes a payment through the deployed Soroban smart contract.
+**Using npm (equivalent):**
+
+```bash
+npm install
+npx ts-node scripts/sdk.ts
+```
+
+## Project structure
+
+- `scripts/` – SDK methods plus a `main` entry to see how it runs end-to-end.
+    - `scripts/sdk.ts` – core library (documented).
+- `showcase/` – example app showing how to abstract XLM gas and charge in USDC instead.
+
+## SDK functions
+
+### Signer interfaces
+
+```typescript
+export interface AuthEntrySigner {
+    getPublicKey(): string | Promise<string>;
+    signAuthEntry(
+        unsigned: xdr.SorobanAuthorizationEntry,
+        validUntilLedger: number,
+        networkPassphrase: string
+    ): Promise<xdr.SorobanAuthorizationEntry>;
+}
+
+export interface TxSigner {
+    getPublicKey(): string | Promise<string>;
+    signTxXDR(b64Xdr: string, networkPassphrase: string): Promise<string>;
+}
+```
+
+*Why?* These let you plug in either **raw `Keypair`** (Node) or **Freighter** (browser) without changing the rest of the flow.
+
+### Node adapters (ready to use)
+
+```typescript
+export const keypairAuthSigner = (kp: Keypair): AuthEntrySigner => ({
+    getPublicKey: () => kp.publicKey(),
+    signAuthEntry: (u, v, p) => authorizeEntry(u, kp, v, p),
+});
+
+export const keypairTxSigner = (kp: Keypair): TxSigner => ({
+    getPublicKey: () => kp.publicKey(),
+    signTxXDR: async (b64, pass) => {
+        const tx = TransactionBuilder.fromXDR(b64, pass);
+        if (tx instanceof FeeBumpTransaction) tx.innerTransaction.sign(kp);
+        else (tx as Transaction).sign(kp);
+        return tx.toXDR();
+    },
+});
+```
+
+### Core flow
+
+- **`constructRouterContractOp(...)`** – Backend-only logic. Builds a RouterV1 `invokeContractFunction` op **without auth** and returns `{ opWithoutAuth, routerArgs }`.
+- **`simulateAndGetUnsignedCaller(...)`** – Backend simulates a draft transaction to retrieve `required_auth`. Returns `{ unsignedCaller, sim }`.
+- **`makeOpWithAuth(...)`** – Frontend asks `AuthEntrySigner` (user) to sign the **SorobanAuthorizationEntry**, then returns the same op with `auth` populated.
+- **`submitOpWithAuthToRelayer(...)`** – Backend assembles resource footprint and fees using `sim`, asks `TxSigner` (payer) to sign the **transaction XDR**, then sends and polls.
+
+### Helpers
+
+- **`estimateGasXlm()`** – demo gas heuristic (`2 * BASE_FEE`). Replace with a real estimator.
+- **`estimateMaxUsdcForGas({ margin, estimatedGasXlm, rateXlmToUsdc })`** – converts the gas target to a **max USDC in** for the swap.
+- **Invocation builders**:
+    - `buildInvocation_UsdcTransfer(from, to, amount)`
+    - `buildInvocation_UsdcSwapXlm(amount_out, amount_in_max, caller, deadline)` (USDC → XLM path)
+
+## Browser usage (Freighter)
+
+If you don’t want to bundle Node `Keypair`s in the browser, implement the signer interfaces with Freighter:
+
+```typescript
+import * as freighter from '@stellar/freighter-api';
+import { xdr } from '@stellar/stellar-sdk';
+
+const freighterUserSigner: AuthEntrySigner = {
+    getPublicKey: () => freighter.getPublicKey(),
+    signAuthEntry: async (unsigned, validUntil, passphrase) => {
+        // Freighter generally returns base64; convert back to XDR object
+        const signedB64 = await freighter.signAuthEntry(unsigned.toXDR('base64'), {
+        networkPassphrase: passphrase,
+        validUntilLedger: validUntil,
+        });
+        return xdr.SorobanAuthorizationEntry.fromXDR(signedB64, 'base64');
+    },
+};
+
+const freighterTxSigner: TxSigner = {
+    getPublicKey: () => freighter.getPublicKey(),
+    signTxXDR: (b64, passphrase) => freighter.signTransaction(b64, { networkPassphrase: passphrase }),
+};
+```
+
+## Configuration & assumptions
+
+- **Contracts** are pinned via IDs in `scripts/sdk.ts` (RouterV1, USDC, XLM wrapper, Soroswap router). Change as needed.
+- **Decimals**: the demo uses a scale of `1e7`. Adjust to your tokens’ decimals.
+- **Swap safety**: set real `amount_in_max` margins & short deadlines (slippage control).
+- **Prereqs**: the user should have USDC balance; relevant trustlines/approvals must exist per your token/router configs.
+- **Security**: never hardcode secrets in production; use env or wallet signers. Validate inputs server-side.
+
+## Why RouterV1?
+
+Soroban only allows **one** contract invocation op per transaction. RouterV1 batches multiple contract invocations into a single op so the gas purchase (refund) and user action happen atomically.
+
+## License
+
+MIT

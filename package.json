@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "pay-with-kwickbit": "pnpm exec ts-node scripts/pay_through_payment_processor.ts"
+    "sdk": "pnpm exec ts-node scripts/sdk.ts"
   },
   "dependencies": {
     "@stellar/stellar-base": "^14.0.0",

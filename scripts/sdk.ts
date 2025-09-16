@@ -14,6 +14,25 @@ import {
 
 type SimulateTransactionResponse = rpc.Api.SimulateTransactionResponse;
 
+/**
+ * Gasolina SDK – core primitives to let an app (relayer) pay Soroban gas in advance
+ * while the user refunds the relayer immediately in a separate leg of the same
+ * RouterV1 contract execution.
+ *
+ * High-level flow (4 steps):
+ *  1) BACKEND builds an `invokeContractFunction` operation to RouterV1 (no auth).
+ *  2) BACKEND simulates and extracts required unsigned auth for the user.
+ *  3) FRONTEND has the user sign that auth entry (not the transaction).
+ *  4) BACKEND assembles, signs the transaction as payer, submits, and polls.
+ *
+ * Notes:
+ *  - Soroban only allows a single invoke op per transaction → we use RouterV1 to bundle
+ *    multiple inner invocations (e.g., Soroswap swap + USDC transfer).
+ *  - The signer interfaces below allow plugging in either raw Keypairs (Node) or
+ *    browser wallets like Freighter without changing the flow.
+ */
+
+
 // ───────────────────────────────────────────────────────────────────────────────
 // Network / server
 // ───────────────────────────────────────────────────────────────────────────────
@@ -23,17 +42,33 @@ const server = new rpc.Server(rpcUrl);
 
 // ───────────────────────────────────────────────────────────────────────────────
 // Contracts / addrs
+//   - ROUTER_CONTRACT_ID: Stellar RouterV1 (bundles multiple contract calls)
+//   - USDC_TOKEN_CONTRACT_ID: Soroban USDC token contract
+//   - XLM_TOKEN_CONTRACT_ID: Soroban wrapped XLM token contract
+//   - SOROSWAP_ROUTER_ID: Soroswap Router contract for swaps
 // ───────────────────────────────────────────────────────────────────────────────
 const ROUTER_CONTRACT_ID      = 'CCNXMLQRLAAZ5MGK5HXMWFDZEU6SE67Y5CHI3QTKXIGY46PUU5NJJZS5';       // C...
 const USDC_TOKEN_CONTRACT_ID  = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA';   // C...
 const XLM_TOKEN_CONTRACT_ID = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
 const SOROSWAP_ROUTER_ID      = 'CCMAPXWVZD4USEKDWRYS7DA4Y3D7E2SDMGBFJUCEXTC7VN6CUBGWPFUS';
 
+
 // ───────────────────────────────────────────────────────────────────────────────
 // Generic signer interfaces
+//   - AuthEntrySigner: signs SorobanAuthorizationEntry (user side)
+//   - TxSigner: signs a built transaction XDR (relayer/payer side)
+// These let you swap raw Keypair (Node) or Freighter (browser) without changing code.
 // ───────────────────────────────────────────────────────────────────────────────
 export interface AuthEntrySigner {
+    /** User's public key (G...). */
     getPublicKey(): string | Promise<string>;
+
+    /**
+     * Sign an unsigned auth entry with validity horizon.
+     * @param unsigned The authorization entry returned by simulation.
+     * @param validUntilLedger Latest ledger sequence where the signature stays valid.
+     * @param networkPassphrase Soroban network passphrase.
+     */
     signAuthEntry(
         unsigned: xdr.SorobanAuthorizationEntry,
         validUntilLedger: number,
@@ -42,17 +77,29 @@ export interface AuthEntrySigner {
 }
 
 export interface TxSigner {
+    /** Payer's public key (G...). */
     getPublicKey(): string | Promise<string>;
-    /** Returns a signed base64 XDR for the given transaction XDR */
+
+    /**
+     * Signs a base64-encoded transaction XDR and returns base64-encoded signed XDR.
+     * Handles classic or fee-bump automatically.
+     */
     signTxXDR(b64Xdr: string, networkPassphrase: string): Promise<string>;
 }
 
+
+// ───────────────────────────────────────────────────────────────────────────────
 // Handy adapters for Node (raw Keypair)
+//   - keypairAuthSigner: user/caller entry signer
+//   - keypairTxSigner: payer/relayer tx signer (classic + fee bump)
+// ───────────────────────────────────────────────────────────────────────────────
+/** AuthEntrySigner implemented with a raw Keypair (Node). */
 export const keypairAuthSigner = (kp: Keypair): AuthEntrySigner => ({
     getPublicKey: () => kp.publicKey(),
     signAuthEntry: (u, v, p) => authorizeEntry(u, kp, v, p),
 });
 
+/** TxSigner implemented with a raw Keypair (Node). */
 export const keypairTxSigner = (kp: Keypair): TxSigner => ({
     getPublicKey: () => kp.publicKey(),
     signTxXDR: async (b64, pass) => {
@@ -77,7 +124,16 @@ const scVec  = (vals: xdr.ScVal[]) => xdr.ScVal.scvVec(vals);
 
 
 
-// Build one invocation tuple: (Address contract, Symbol method, Vec<Val> args, bool can_fail)
+/**
+ * Build RouterV1 invocation tuple for: USDC.transfer(from, to, amount).
+ *
+ * @param fromG   Sender (user) G-address
+ * @param toG     Recipient G-address
+ * @param amount  Amount as i128 (use nativeToScVal(amount, { type: 'i128' }))
+ * @returns       A RouterV1 tuple `(contract, method, args, can_fail=false)`
+ *
+ * Note: If your token uses u64 in its interface, adapt `nativeToScVal` accordingly.
+ */
 function buildInvocation_UsdcTransfer(fromG: string, toG: string, amount: bigint): xdr.ScVal {
     // If your token expects i128, switch to: nativeToScVal(amount, { type: 'i128' })
     const args = scVec([ scAddr(fromG), scAddr(toG), nativeToScVal(amount, { type: 'i128' }) ]);
@@ -89,6 +145,15 @@ function buildInvocation_UsdcTransfer(fromG: string, toG: string, amount: bigint
     ]);
 }
 
+/**
+ * Build RouterV1 tuple for Soroswap swap: swap_tokens_for_exact_tokens
+ * Path: USDC → XLM
+ *
+ * @param amount_out       Desired XLM out (i128 units per token’s decimals)
+ * @param amount_in_max    Max USDC in (slippage/limit)
+ * @param callerG          Beneficiary address (to receive XLM)
+ * @param deadline         Unix seconds (u64) – swap deadline
+ */
 function buildInvocation_UsdcSwapXlm(amount_out: number, amount_in_max: number, callerG: string, deadline: number): xdr.ScVal {
     const args = scVec([
         nativeToScVal(amount_out, { type: 'i128' }),                 // amount_out (i128)
@@ -109,11 +174,19 @@ function buildInvocation_UsdcSwapXlm(amount_out: number, amount_in_max: number, 
 }
 
 
-
+/**
+ * Trivial “gas estimate” used for hackathon demo:
+ * we just buy `2 * BASE_FEE` worth of XLM (in stroops).
+ * Replace with a real estimator for production.
+ */
 async function estimateGasXlm(): Promise<number> {
     return 2 * Number(BASE_FEE);
 }
 
+/**
+ * Compute the *max* USDC we’re willing to spend to acquire `estimatedGasXlm`.
+ * Adds a small margin and scales to token decimals (1e7 here).
+ */
 async function estimateMaxUsdcForGas({margin, estimatedGasXlm, rateXlmToUsdc}: {margin: number, estimatedGasXlm: number, rateXlmToUsdc: number}): Promise<number> {
     const SCALE = 10 ** 7;
     return Math.ceil((estimatedGasXlm * rateXlmToUsdc + margin) * SCALE);
@@ -211,6 +284,9 @@ async function makeOpWithAuth({unsignedCaller, routerArgs, routerContractId, use
 }
 
 
+// ───────────────────────────────────────────────────────────────────────────────
+// 4) BACKEND – assemble resources, have payer sign the TX XDR, submit & poll
+// ───────────────────────────────────────────────────────────────────────────────
 async function submitOpWithAuthToRelayer({payerSigner, opWithAuth, sim
                                          }: {payerSigner: TxSigner, opWithAuth: xdr.Operation, sim: SimulateTransactionResponse}
 ) {
@@ -240,12 +316,21 @@ async function submitOpWithAuthToRelayer({payerSigner, opWithAuth, sim
 }
 
 
+/**
+ * Example demo runner (Node):
+ *  - Builds the router op
+ *  - Simulates to get required user auth
+ *  - Has the user signer sign the auth entry
+ *  - Assembles and submits with payer signer
+ *
+ * Replace the keypairs with real signers (e.g., Freighter) in production.
+ */
 async function main() {
     const AMOUNT = BigInt(10_000); // u64 example (e.g., 0.10 USDC with 6 dp)
     const RATE_XLM_TO_USDC = 0.4;
     const XLM_EXTRA_MARGIN = 0.001;
 
-    // Replace these with your own source of keys or other signer impls
+    // Demo signers (Node). Swap these for Freighter in a browser.
     const backendKP = Keypair.fromSecret('SCUK4TJBBSKZVOS3ELZGRNGDYEGISJKMIN2KOY6E5XS6JXBQNUKYNGRO');
     const userKP = Keypair.fromSecret('SDJH3Q25A66PT27RSI2S2TPB6LJ72BZXOFUZU6TK72OW5A77EMLR57AA');
     const recipientKP = Keypair.fromSecret('SCQYME5TXWWFQDBFJ2N3RPCHEUANSAUHCHJHOAELPCGHCD6TXV33NUNY');
@@ -262,8 +347,7 @@ async function main() {
     console.log(`recipientG: ${recipientG}`);
 
 
-    // >>>>> FRONTEND
-
+    // 1) FRONTEND-like estimation (simple demo logic)
     const estimatedGas = await estimateGasXlm();
     const estimatedMaxUsdcForGas = await estimateMaxUsdcForGas({
         estimatedGasXlm: estimatedGas,
@@ -279,21 +363,15 @@ async function main() {
         estimatedMaxUsdcForGas,
     });
 
-    // >>>>> BACKEND
-
+    // 2) BACKEND simulation
     const {unsignedCaller, sim} = await simulateAndGetUnsignedCaller({
         callerG, payerSigner, opWithoutAuth
     });
 
-    // action: BACKEND sends unsignedCaller -> FRONTEND
-
-    // >>>>> FRONTEND
-
+    // 3) FRONTEND user auth signing
     const opWithAuth = await makeOpWithAuth({userSigner, unsignedCaller, routerArgs, routerContractId: ROUTER_CONTRACT_ID});
-    // action:   FRONTEND sends opWithAuth -> BACKEND
 
-    // >>>>> BACKEND
-
+    // 4) BACKEND submission
     await submitOpWithAuthToRelayer({payerSigner, opWithAuth, sim});
 }
 
