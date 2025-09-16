@@ -30,6 +30,14 @@ const ROUTER_CONTRACT_ID      = 'CCNXMLQRLAAZ5MGK5HXMWFDZEU6SE67Y5CHI3QTKXIGY46P
 const USDC_TOKEN_CONTRACT_ID  = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA';   // C...
 const USDC_ISSUER             = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 const USDC_CODE               = 'USDC';
+const XLM_TOKEN_CONTRACT_ID = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
+
+const SOROSWAP_ROUTER_ID      = 'CCMAPXWVZD4USEKDWRYS7DA4Y3D7E2SDMGBFJUCEXTC7VN6CUBGWPFUS';
+
+const SCALE = 10 ** 7;
+
+const RATE_XLM_TO_USDC = 0.4;
+const XLM_EXTRA_MARGIN = 0.001
 
 // Soroban token amounts are often i128; if your token uses u64, keep u64 like below
 const AMOUNT = BigInt(10_000); // u64 example (e.g., 0.10 USDC with 6 dp)
@@ -46,6 +54,25 @@ function buildInvocation_UsdcTransfer(fromG: string, toG: string, amount: bigint
     return scVec([
         scAddr(USDC_TOKEN_CONTRACT_ID), // contract (Address)
         scSym('transfer'),              // method (Symbol)
+        args,                           // args (Vec<Val>)
+        xdr.ScVal.scvBool(false),       // can_fail = false
+    ]);
+}
+
+function buildInvocation_UsdcSwapXlm(amount_out: number, amount_in_max: number, callerG: string, deadline: number): xdr.ScVal {
+    const args = scVec([
+        nativeToScVal(amount_out, { type: 'i128' }),                 // amount_out (i128)
+        nativeToScVal(amount_in_max, { type: 'i128' }),                   // amount_out_min (i128)
+        xdr.ScVal.scvVec([          // path: Vec<Address> = [USDC, XLM]
+            Address.fromString(USDC_TOKEN_CONTRACT_ID).toScVal(),
+            Address.fromString(XLM_TOKEN_CONTRACT_ID).toScVal(),
+        ]),
+        Address.fromString(callerG).toScVal(),                // to
+        nativeToScVal(deadline, { type: "u64" }),        // deadline (unix seconds)
+    ]);
+    return scVec([
+        scAddr(SOROSWAP_ROUTER_ID), // contract (Address)
+        scSym('swap_tokens_for_exact_tokens'),              // method (Symbol)
         args,                           // args (Vec<Val>)
         xdr.ScVal.scvBool(false),       // can_fail = false
     ]);
@@ -169,12 +196,18 @@ async function main() {
     //    code: USDC_CODE,
     //    issuer: USDC_ISSUER,
     //});
+    const amountOutXlm = 2 * Number(BASE_FEE); // e.g. 200/1e7 = 0.0000200
+    const amountInMaxUsdc = Math.ceil((amountOutXlm * RATE_XLM_TO_USDC + XLM_EXTRA_MARGIN) * SCALE);
+    const HUNDRED_YEARS = (365 * 24 * 60 * 60);
+    const DEADLINE_FOREVER = 32_503_680_000;
+// 3) “forever” deadline (no timeout)
+    const DEADLINE_FOR_EVER = 0;
 
     // --- Router.exec args ---
     // exec(caller: Address, invocations: Vec<(Address, Symbol, Vec<Val>, bool)>)
     const invocationsVec = scVec([
         buildInvocation_UsdcTransfer(callerG, recipientG, AMOUNT),
-        // ... add more invocations if you want chaining
+        buildInvocation_UsdcSwapXlm(amountOutXlm, amountInMaxUsdc, callerG, DEADLINE_FOREVER)
     ]);
 
     const routerArgs: xdr.ScVal[] = [
@@ -252,3 +285,4 @@ main().catch(err => {
     console.error(err);
     process.exit(1);
 });
+
