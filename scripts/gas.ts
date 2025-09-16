@@ -196,6 +196,9 @@ async function main() {
     //    code: USDC_CODE,
     //    issuer: USDC_ISSUER,
     //});
+
+    // >>>>> FRONTEND
+
     const amountOutXlm = 2 * Number(BASE_FEE); // e.g. 200/1e7 = 0.0000200
     const amountInMaxUsdc = Math.ceil((amountOutXlm * RATE_XLM_TO_USDC + XLM_EXTRA_MARGIN) * SCALE);
     const HUNDRED_YEARS = (365 * 24 * 60 * 60);
@@ -221,6 +224,9 @@ async function main() {
         function: 'exec',
         args: routerArgs,
     });
+    // action:   FRONTEND sends opWithoutAuth -> BACKEND
+
+    // >>>>> BACKEND
 
     // Build tx with payer (backend) as sourceAccount (sequence + fees)
     const payerAccount = await server.getAccount(payerG);
@@ -244,6 +250,10 @@ async function main() {
     // Both may be required depending on your contract flow.
     if (!unsignedCaller) throw new Error('Missing caller auth requirement in simulation result');
 
+    // action: BACKEND sends unsignedCaller -> FRONTEND
+
+    // >>>>> FRONTEND
+
     // ---------- 3) Sign the AUTH entries (not the op itself) ----------
     const latest = await server.getLatestLedger();
     const validUntil = latest.sequence + 1000; // ledger seq horizon for auth validity
@@ -258,6 +268,9 @@ async function main() {
         args: routerArgs,
         auth: signedAuth,
     });
+    // action:   FRONTEND sends opWithAuth -> BACKEND
+
+    // >>>>> BACKEND
 
     const payerAccount2 = await server.getAccount(payerG);
     const needsFootprint = new TransactionBuilder(payerAccount2, {
