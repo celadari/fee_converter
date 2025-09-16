@@ -310,7 +310,7 @@ export async function buildRouterExecTx(
     const server = new rpc.Server(cfg.rpcUrl, { allowHttp: cfg.rpcUrl.startsWith('http://') });
 
     // Load classic account to get a fresh sequence
-    const acct = await server.getAccount(cfg.sourceAccount ?? cfg.caller);
+    const acct = await server.getAccount(cfg.sourceAccount);
     const source = new Account(acct.accountId(), acct.sequenceNumber());
 
     const contract = new Contract(cfg.contractId);
@@ -392,15 +392,18 @@ export async function sendPreparedTx(rpcUrl: string, tx: Transaction) {
 async function main(): Promise<void> {
     const usdcContractAddress = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA';
     const bob = 'GCCY4JAL7EALEYRAOQT2AKICOIS33RKJ5DDLTL3SAIGSCVXEMVJESNGF';
+    const alice = 'GACITQZ7I4CQU5YLMWV4F274NVZJ2RSP6NISYJSYBK47D2IONAL26MBH';
 
     const tx = await buildRouterExecTx({
        rpcUrl: 'https://soroban-testnet.stellar.org:443',
        networkPassphrase: Networks.TESTNET,
        contractId: process.env.GAS_ROUTER_SMART_CONTRACT_ID!,
        caller: bob,
+        sourceAccount: alice,
      }, [
        { contractId: 'ccf...USDC', method: 'transfer', args: [S.addr('G...USER'), S.addr('G...RECIP'), S.i128('2500000')], canFail: false },
      ]);
+
 
     // sign with wallet (caller must sign to satisfy require_auth)
     const signed = await wallet.signSorobanTx(tx);
