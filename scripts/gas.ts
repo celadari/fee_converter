@@ -11,6 +11,7 @@ import {
     xdr,
     rpc, Horizon, Asset, Transaction, FeeBumpTransaction,
 } from '@stellar/stellar-sdk';
+type SimulateTransactionResponse = rpc.Api.SimulateTransactionResponse;
 
 // ---------- Config ----------
 const rpcUrl = 'https://soroban-testnet.stellar.org';
@@ -134,83 +135,33 @@ async function sponsorAndCreateTrustline(opts: {
     }
 }
 
-async function main() {
-    const callerG  = userKeyPair.publicKey();     // the user/actor (must require_auth)
-    const payerG   = backendKeypair.publicKey();  // fee payer / sourceAccount
-    const recipientG= recipientKeypair.publicKey();
-    console.log(`callerG: ${callerG}`);
-    console.log(`payerG: ${payerG}`);
-    console.log(`recipientG: ${recipientG}`);
+async function estimateGasXlm(): Promise<number> {
+    return 2 * Number(BASE_FEE);
+}
 
+async function estimateMaxUsdcForGas({margin, estimatedGasXlm, rateXlmToUsdc}: {margin: number, estimatedGasXlm: number, rateXlmToUsdc: number}): Promise<number> {
+    return Math.ceil((estimatedGasXlm * rateXlmToUsdc + margin) * SCALE);
+}
 
-    // ONLY ONCE
-    // caller trustline
-    //await sponsorAndCreateTrustline({
-    //    horizonUrl: 'https://horizon-testnet.stellar.org',
-    //    networkPassphrase,
-    //    backend: backendKeypair,     // sponsor/payer
-    //    userPub: callerG,            // G... of the user
-    //    userSigner: async (xdr: string): Promise<string> => {
-    //        // Re-hydrate the tx from XDR
-    //        const tx = TransactionBuilder.fromXDR(xdr, networkPassphrase);
-//
-    //        // If it’s a fee bump, sign the inner tx; else sign the tx directly
-    //        if (tx instanceof FeeBumpTransaction) {
-    //            tx.innerTransaction.sign(userKeyPair);
-    //            return tx.toXDR();
-    //        } else {
-    //            tx.sign(userKeyPair);
-    //            return tx.toXDR();
-    //        }
-//
-    //        // If you prefer to ignore fee-bumps during testing:
-    //         (tx as any).sign(userKeyPair); return (tx as any).toXDR();
-    //    },
-//
-    //    code: USDC_CODE,
-    //    issuer: USDC_ISSUER,
-    //});
-    // recipient trustline (if needed)
-    //await sponsorAndCreateTrustline({
-    //    horizonUrl: 'https://horizon-testnet.stellar.org',
-    //    networkPassphrase,
-    //    backend: backendKeypair,
-    //    userPub: recipientG,
-    //    userSigner: async (xdr: string): Promise<string> => {
-    //        // Re-hydrate the tx from XDR
-    //        const tx = TransactionBuilder.fromXDR(xdr, networkPassphrase);
-//
-    //        // If it’s a fee bump, sign the inner tx; else sign the tx directly
-    //        if (tx instanceof FeeBumpTransaction) {
-    //            tx.innerTransaction.sign(recipientKeypair);
-    //            return tx.toXDR();
-    //        } else {
-    //            tx.sign(recipientKeypair);
-    //            return tx.toXDR();
-    //        }
-//
-    //        // If you prefer to ignore fee-bumps during testing:
-    //        (tx as any).sign(userKeyPair); return (tx as any).toXDR();
-    //    },
-//
-    //    code: USDC_CODE,
-    //    issuer: USDC_ISSUER,
-    //});
-
-    // >>>>> FRONTEND
-
-    const amountOutXlm = 2 * Number(BASE_FEE); // e.g. 200/1e7 = 0.0000200
-    const amountInMaxUsdc = Math.ceil((amountOutXlm * RATE_XLM_TO_USDC + XLM_EXTRA_MARGIN) * SCALE);
-    const HUNDRED_YEARS = (365 * 24 * 60 * 60);
+// BACKEND
+async function constructRouterContractOp({
+                                                callerG,
+                                                recipientG,
+                                                estimatedGas,
+                                                estimatedMaxUsdcForGas,
+                                            }
+                                                : {
+                                                callerG: string,
+                                                recipientG: string,
+                                                estimatedGas: number,
+                                                estimatedMaxUsdcForGas: number,
+                                            }) {
+    // deadline parameter in soroswap contract invocation, we put huge deadline here for sake of hackathon
     const DEADLINE_FOREVER = 32_503_680_000;
-// 3) “forever” deadline (no timeout)
-    const DEADLINE_FOR_EVER = 0;
 
-    // --- Router.exec args ---
-    // exec(caller: Address, invocations: Vec<(Address, Symbol, Vec<Val>, bool)>)
     const invocationsVec = scVec([
         buildInvocation_UsdcTransfer(callerG, recipientG, AMOUNT),
-        buildInvocation_UsdcSwapXlm(amountOutXlm, amountInMaxUsdc, callerG, DEADLINE_FOREVER)
+        buildInvocation_UsdcSwapXlm(estimatedGas, estimatedMaxUsdcForGas, callerG, DEADLINE_FOREVER)
     ]);
 
     const routerArgs: xdr.ScVal[] = [
@@ -224,11 +175,13 @@ async function main() {
         function: 'exec',
         args: routerArgs,
     });
-    // action:   FRONTEND sends opWithoutAuth -> BACKEND
 
-    // >>>>> BACKEND
+    return {opWithoutAuth, routerArgs};
+}
 
-    // Build tx with payer (backend) as sourceAccount (sequence + fees)
+async function simulateAndGetUnsignedCaller({callerG, payerG, opWithoutAuth
+                                                }: {callerG: string, payerG: string, opWithoutAuth: xdr.Operation}
+    ) {
     const payerAccount = await server.getAccount(payerG);
     const draftTx = new TransactionBuilder(payerAccount, {
         fee: BASE_FEE,
@@ -249,12 +202,11 @@ async function main() {
 
     // Both may be required depending on your contract flow.
     if (!unsignedCaller) throw new Error('Missing caller auth requirement in simulation result');
+    return {unsignedCaller, sim};
+}
 
-    // action: BACKEND sends unsignedCaller -> FRONTEND
 
-    // >>>>> FRONTEND
-
-    // ---------- 3) Sign the AUTH entries (not the op itself) ----------
+async function makeOpWithAuth({unsignedCaller, routerArgs, routerContractId}: {routerContractId: string, unsignedCaller: xdr.SorobanAuthorizationEntry, routerArgs: xdr.ScVal[]}) {
     const latest = await server.getLatestLedger();
     const validUntil = latest.sequence + 1000; // ledger seq horizon for auth validity
 
@@ -263,15 +215,18 @@ async function main() {
 
     // ---------- 4) Build the SAME op WITH signed auth ----------
     const opWithAuth = Operation.invokeContractFunction({
-        contract: ROUTER_CONTRACT_ID,
+        contract: routerContractId,
         function: 'exec',
         args: routerArgs,
         auth: signedAuth,
     });
-    // action:   FRONTEND sends opWithAuth -> BACKEND
 
-    // >>>>> BACKEND
+    return opWithAuth;
+}
 
+async function submitOpWithAuthToRelayer({payerG, opWithAuth, sim
+                                         }: {payerG: string, opWithAuth: xdr.Operation, sim: SimulateTransactionResponse}
+) {
     const payerAccount2 = await server.getAccount(payerG);
     const needsFootprint = new TransactionBuilder(payerAccount2, {
         fee: BASE_FEE,
@@ -292,6 +247,49 @@ async function main() {
     // ---------- 7) Poll until confirmed ----------
     const final = await server.pollTransaction(send.hash, { attempts: 30 });
     console.log('final status:', final.status);
+}
+
+async function main() {
+    const callerG  = userKeyPair.publicKey();     // the user/actor (must require_auth)
+    const payerG   = backendKeypair.publicKey();  // fee payer / sourceAccount
+    const recipientG= recipientKeypair.publicKey();
+    console.log(`callerG: ${callerG}`);
+    console.log(`payerG: ${payerG}`);
+    console.log(`recipientG: ${recipientG}`);
+
+
+    // >>>>> FRONTEND
+
+    const estimatedGas = await estimateGasXlm();
+    const estimatedMaxUsdcForGas = await estimateMaxUsdcForGas({
+        estimatedGasXlm: estimatedGas,
+        margin: XLM_EXTRA_MARGIN,
+        rateXlmToUsdc: RATE_XLM_TO_USDC,
+    });
+
+    const {opWithoutAuth, routerArgs} = await constructRouterContractOp({
+        callerG,
+        recipientG,
+        estimatedGas,
+        estimatedMaxUsdcForGas,
+    });
+
+    // >>>>> BACKEND
+
+    const {unsignedCaller, sim} = await simulateAndGetUnsignedCaller({
+        callerG, payerG, opWithoutAuth
+    });
+
+    // action: BACKEND sends unsignedCaller -> FRONTEND
+
+    // >>>>> FRONTEND
+
+    const opWithAuth = await makeOpWithAuth({unsignedCaller, routerArgs, routerContractId: ROUTER_CONTRACT_ID});
+    // action:   FRONTEND sends opWithAuth -> BACKEND
+
+    // >>>>> BACKEND
+
+    await submitOpWithAuthToRelayer({payerG, opWithAuth, sim});
 }
 
 main().catch(err => {

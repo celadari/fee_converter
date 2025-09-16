@@ -15,6 +15,63 @@ This repository contains all necessary code, scripts, and CI configuration to **
 - `.github/actions/deploy-soroban-contract-and-export-sc-address/`  
   Composite GitHub Action to deploy + export the deployed address as GCP secrets.
 
+  
+```typescript
+// ONLY ONCE
+     caller trustline
+    await sponsorAndCreateTrustline({
+        horizonUrl: 'https://horizon-testnet.stellar.org',
+        networkPassphrase,
+        backend: backendKeypair,     // sponsor/payer
+        userPub: callerG,            // G... of the user
+        userSigner: async (xdr: string): Promise<string> => {
+            // Re-hydrate the tx from XDR
+            const tx = TransactionBuilder.fromXDR(xdr, networkPassphrase);
+
+            // If it’s a fee bump, sign the inner tx; else sign the tx directly
+            if (tx instanceof FeeBumpTransaction) {
+                tx.innerTransaction.sign(userKeyPair);
+                return tx.toXDR();
+            } else {
+                tx.sign(userKeyPair);
+                return tx.toXDR();
+            }
+
+            // If you prefer to ignore fee-bumps during testing:
+             (tx as any).sign(userKeyPair); return (tx as any).toXDR();
+        },
+
+        code: USDC_CODE,
+        issuer: USDC_ISSUER,
+    });
+     recipient trustline (if needed)
+    await sponsorAndCreateTrustline({
+        horizonUrl: 'https://horizon-testnet.stellar.org',
+        networkPassphrase,
+        backend: backendKeypair,
+        userPub: recipientG,
+        userSigner: async (xdr: string): Promise<string> => {
+            // Re-hydrate the tx from XDR
+            const tx = TransactionBuilder.fromXDR(xdr, networkPassphrase);
+
+            // If it’s a fee bump, sign the inner tx; else sign the tx directly
+            if (tx instanceof FeeBumpTransaction) {
+                tx.innerTransaction.sign(recipientKeypair);
+                return tx.toXDR();
+            } else {
+                tx.sign(recipientKeypair);
+                return tx.toXDR();
+            }
+
+            // If you prefer to ignore fee-bumps during testing:
+            (tx as any).sign(userKeyPair); return (tx as any).toXDR();
+        },
+
+        code: USDC_CODE,
+        issuer: USDC_ISSUER,
+    });
+```
+
 
 ---
 

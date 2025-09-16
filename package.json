@@ -7,6 +7,7 @@
     "pay-with-kwickbit": "pnpm exec ts-node scripts/pay_through_payment_processor.ts"
   },
   "dependencies": {
+    "@stellar/stellar-base": "^14.0.0",
     "@stellar/stellar-sdk": "14.1.1"
   },
   "keywords": [],
