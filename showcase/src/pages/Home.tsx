@@ -105,6 +105,15 @@ function buildInvocation_UsdcSwapXlm(
 
 const Home: React.FC = () => {
   const [shouldZoom, setShouldZoom] = useState(false);
+  const [notification, setNotification] = useState<{
+    type: "success" | "error" | "info";
+    message: string;
+    show: boolean;
+  }>({
+    type: "info",
+    message: "",
+    show: false,
+  });
 
   const handleZoomClick = () => {
     console.log("Botón clickeado, shouldZoom actual:", shouldZoom);
@@ -122,14 +131,29 @@ const Home: React.FC = () => {
   // const recipientG= recipientKeypair.publicKey();
   // GasolinaMain();
 
+  const [loading, setLoading] = useState(false);
+
+  const showNotification = (
+    type: "success" | "error" | "info",
+    message: string,
+  ) => {
+    setNotification({ type, message, show: true });
+    setTimeout(() => {
+      setNotification((prev) => ({ ...prev, show: false }));
+    }, 5000);
+  };
+
   const handleSignTransaction = async () => {
+    setLoading(true);
     if (!address) {
-      alert("Please connect your wallet first");
+      showNotification("error", "Please connect your wallet first");
+      setLoading(false);
       return;
     }
 
     if (!signTransaction) {
-      alert("Wallet does not support transaction signing");
+      showNotification("error", "Wallet does not support transaction signing");
+      setLoading(false);
       return;
     }
 
@@ -257,13 +281,17 @@ const Home: React.FC = () => {
       console.log("🔍 Signing result:", result);
 
       submitToRelay(signedXdr);
+      showNotification("success", "Transaction submitted successfully!");
     } catch (err) {
       console.error("❌ Failed to create or sign transaction:", err);
-      alert(
+      showNotification(
+        "error",
         `Failed to create or sign transaction: ${err instanceof Error ? err.message : "Unknown error"}`,
       );
     } finally {
       // setIsSigning(false);
+      setLoading(false);
+      setShouldZoom(false);
     }
   };
 
@@ -273,6 +301,32 @@ const Home: React.FC = () => {
 
   return (
     <>
+      <style>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        @keyframes slideInFromTop {
+          from {
+            opacity: 0;
+            transform: translateY(-100px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        @keyframes slideOutToTop {
+          from {
+            opacity: 1;
+            transform: translateY(0);
+          }
+          to {
+            opacity: 0;
+            transform: translateY(-100px);
+          }
+        }
+      `}</style>
       <div
         style={{
           width: "100vw",
@@ -289,57 +343,212 @@ const Home: React.FC = () => {
         <Scene3D className="fullscreen-scene" shouldZoom={shouldZoom} />
       </div>
 
-      {/* Botón de zoom centrado */}
-      <div
-        style={{
-          position: "fixed",
-          top: "90%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          zIndex: 2,
-          pointerEvents: "auto",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <button
-          onClick={handleZoomClick}
+      {/* Loading Overlay */}
+      {loading && (
+        <div
           style={{
-            padding: "16px 32px",
-            borderRadius: "16px",
-            fontWeight: "600",
-            color: "white",
-            border: "2px solid rgba(255, 255, 255, 0.3)",
-            cursor: "pointer",
-            transition: "all 0.3s ease",
-            background: "linear-gradient(135deg, #8B5CF6, #7C3AED)",
-            boxShadow: "0 8px 32px rgba(139, 92, 246, 0.6)",
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            backgroundColor: "rgba(0, 0, 0, 0.7)",
             backdropFilter: "blur(10px)",
-            fontSize: "18px",
-            minWidth: "220px",
-            minHeight: "70px",
+            zIndex: 9999,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            userSelect: "none",
-            outline: "none",
-            textShadow: "0 2px 4px rgba(0, 0, 0, 0.5)",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.transform = "scale(1.05)";
-            e.currentTarget.style.boxShadow =
-              "0 12px 40px rgba(139, 92, 246, 0.8)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.transform = "scale(1)";
-            e.currentTarget.style.boxShadow =
-              "0 8px 32px rgba(139, 92, 246, 0.6)";
+            pointerEvents: "auto",
           }}
         >
-          {shouldZoom ? "Done" : "Pagar sin XLM - Dale Gas"}
-        </button>
-      </div>
+          <div
+            style={{
+              background: "rgba(255, 255, 255, 0.1)",
+              backdropFilter: "blur(20px)",
+              borderRadius: "24px",
+              padding: "48px",
+              border: "1px solid rgba(255, 255, 255, 0.2)",
+              boxShadow: "0 20px 40px rgba(0, 0, 0, 0.3)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "24px",
+              minWidth: "300px",
+            }}
+          >
+            <div
+              style={{
+                width: "60px",
+                height: "60px",
+                border: "4px solid rgba(255, 255, 255, 0.3)",
+                borderTop: "4px solid #8B5CF6",
+                borderRadius: "50%",
+                animation: "spin 1s linear infinite",
+              }}
+            />
+            <div style={{ textAlign: "center" }}>
+              <h3
+                style={{
+                  color: "white",
+                  fontSize: "24px",
+                  fontWeight: "700",
+                  margin: "0 0 8px 0",
+                  textShadow: "0 2px 4px rgba(0, 0, 0, 0.5)",
+                }}
+              >
+                Processing Transaction
+              </h3>
+              <p
+                style={{
+                  color: "rgba(255, 255, 255, 0.8)",
+                  fontSize: "16px",
+                  margin: 0,
+                  fontWeight: "500",
+                }}
+              >
+                Please wait while we process your payment...
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Notification */}
+      {notification.show && (
+        <div
+          style={{
+            position: "fixed",
+            top: "20px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 10000,
+            animation: "slideInFromTop 0.3s ease-out",
+          }}
+        >
+          <div
+            style={{
+              background:
+                notification.type === "error"
+                  ? "linear-gradient(135deg, #EF4444, #DC2626)"
+                  : notification.type === "success"
+                    ? "linear-gradient(135deg, #10B981, #059669)"
+                    : "linear-gradient(135deg, #3B82F6, #1D4ED8)",
+              backdropFilter: "blur(20px)",
+              borderRadius: "16px",
+              padding: "16px 24px",
+              border: "1px solid rgba(255, 255, 255, 0.2)",
+              boxShadow: "0 20px 40px rgba(0, 0, 0, 0.3)",
+              display: "flex",
+              alignItems: "center",
+              gap: "12px",
+              minWidth: "300px",
+              maxWidth: "500px",
+            }}
+          >
+            <div style={{ fontSize: "20px" }}>
+              {notification.type === "error" && "❌"}
+              {notification.type === "success" && "✅"}
+              {notification.type === "info" && "ℹ️"}
+            </div>
+            <div style={{ flex: 1 }}>
+              <p
+                style={{
+                  color: "white",
+                  fontSize: "16px",
+                  fontWeight: "600",
+                  margin: 0,
+                  textShadow: "0 2px 4px rgba(0, 0, 0, 0.5)",
+                }}
+              >
+                {notification.message}
+              </p>
+            </div>
+            <button
+              onClick={() =>
+                setNotification((prev) => ({ ...prev, show: false }))
+              }
+              style={{
+                background: "rgba(255, 255, 255, 0.2)",
+                border: "none",
+                borderRadius: "50%",
+                width: "24px",
+                height: "24px",
+                color: "white",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "14px",
+                fontWeight: "bold",
+              }}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Botón de zoom centrado */}
+      {address && (
+        <div
+          style={{
+            position: "fixed",
+            top: "90%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            zIndex: 2,
+            pointerEvents: "auto",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <button
+            onClick={handleZoomClick}
+            disabled={loading}
+            style={{
+              padding: "16px 32px",
+              borderRadius: "16px",
+              fontWeight: "600",
+              color: "white",
+              border: "2px solid rgba(255, 255, 255, 0.3)",
+              cursor: loading ? "not-allowed" : "pointer",
+              transition: "all 0.3s ease",
+              background: loading
+                ? "#6c757d"
+                : "linear-gradient(135deg, #8B5CF6, #7C3AED)",
+              boxShadow: "0 8px 32px rgba(139, 92, 246, 0.6)",
+              backdropFilter: "blur(10px)",
+              fontSize: "18px",
+              minWidth: "220px",
+              minHeight: "70px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              userSelect: "none",
+              outline: "none",
+              textShadow: "0 2px 4px rgba(0, 0, 0, 0.5)",
+              opacity: loading ? 0.6 : 1,
+            }}
+            onMouseEnter={(e) => {
+              if (!loading) {
+                e.currentTarget.style.transform = "scale(1.05)";
+                e.currentTarget.style.boxShadow =
+                  "0 12px 40px rgba(139, 92, 246, 0.8)";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!loading) {
+                e.currentTarget.style.transform = "scale(1)";
+                e.currentTarget.style.boxShadow =
+                  "0 8px 32px rgba(139, 92, 246, 0.6)";
+              }
+            }}
+          >
+            {shouldZoom ? "Done" : "Pay without XLM - Dale Gas!"}
+          </button>
+        </div>
+      )}
     </>
   );
 };

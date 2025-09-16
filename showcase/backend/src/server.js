@@ -157,7 +157,6 @@ app.post("/relay", async (req, res) => {
             // Prepare the transaction to add Soroban data
             const preparedTransaction =
               await sorobanServer.prepareTransaction(transaction);
-            transaction.sign(accountKeypair);
             console.log("✅ Soroban transaction prepared successfully");
             console.log(
               "  - Has Soroban data:",
@@ -392,6 +391,8 @@ app.post("/relay", async (req, res) => {
     // Sign the fee bump transaction
     try {
       console.log("✍️ Signing fee bump transaction...");
+      const sorobanServer = new StellarRpc.Server(rpcUrl);
+      sorobanServer.prepareTransaction(feeBumpTransaction);
       feeBumpTransaction.sign(sponsorKeypair);
       console.log("✅ Fee bump transaction signed");
 
