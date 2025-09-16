@@ -32,9 +32,6 @@ In this hackathon demo we use two inner calls:
 
 ## How it works (4 steps)
 
-![Flow](./gasolina_flow.png)
-
-
 1. **Frontend** builds a RouterV1 op that wraps two calls:  
    `[ swap_usdc_to_xlm_and_pay_back_backend, transfer ]`, then sends it to the backend.
 2. **Backend** simulates the draft transaction to discover `required_auth`, and returns the user’s **unsigned** auth entry.
@@ -63,18 +60,9 @@ npx ts-node scripts/sdk.ts
 
 ## Project structure
 
-- `scripts/` — SDK methods plus a runnable demo entry.
-    - `scripts/sdk.ts` — core library (documented) **with a `main()` demo** that builds the RouterV1 call, simulates, has the user sign the auth entry, and submits via the relayer.
-    - `scripts/only_once_trustline.ts` — helper to **sponsor & create a USDC trustline** for a user from the payer/relayer account. Useful when your app creates a fresh user address and wants to ensure the USDC trustline exists *only once*.
-
-- `src/` — **not our code**; contains the **Stellar RouterV1** contract sources placed here purely so you can deploy them alongside this repo.
-
-- `showcase/` — minimal example app demonstrating gas abstraction end-to-end:
-    - the user **sends USDC** to a recipient **without paying XLM gas** directly;
-    - the relayer prepays gas and is **refunded within the same RouterV1 execution** (via Soroswap swap USDC→XLM);
-    - the user experience is **identical to a normal send** (single signature), as if they had paid gas in XLM themselves;
-    - includes wiring for the four-step flow (build → simulate → sign auth → submit) and simple UI/console outputs so you can trace each stage.
-    ![Demo Video] => look for hackathon submission
+- `scripts/` – SDK methods plus a `main` entry to see how it runs end-to-end.
+    - `scripts/sdk.ts` – core library (documented).
+- `showcase/` – example app showing how to abstract XLM gas and charge in USDC instead.
 
 ## SDK functions
 
@@ -173,3 +161,5 @@ Soroban only allows **one** contract invocation op per transaction. RouterV1 bat
 ## License
 
 MIT
+
+
