@@ -3,7 +3,6 @@ import styles from "./App.module.css";
 import { Routes, Route, Outlet, useLocation } from "react-router-dom";
 import { useState, useEffect } from "react";
 import Home from "./pages/Home";
-import GasolinaPage from "./pages/GasolinaPage";
 import { FloatingNavbar } from "./components/FloatingNavbar";
 
 const AppLayout: React.FC = () => {
@@ -62,7 +61,7 @@ export default function App() {
     <Routes>
       <Route element={<AppLayout />}>
         <Route index element={<Home />} />
-        <Route path="with-gasolina" element={<GasolinaPage />} />
+        {/* <Route path="with-gasolina" element={<GasolinaPage />} /> */}
       </Route>
     </Routes>
   );

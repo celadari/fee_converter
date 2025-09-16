@@ -61,6 +61,7 @@ npm install
 npx ts-node scripts/sdk.ts
 ```
 
+
 ## Project structure
 
 - `scripts/` — SDK methods plus a runnable demo entry.
@@ -74,7 +75,13 @@ npx ts-node scripts/sdk.ts
     - the relayer prepays gas and is **refunded within the same RouterV1 execution** (via Soroswap swap USDC→XLM);
     - the user experience is **identical to a normal send** (single signature), as if they had paid gas in XLM themselves;
     - includes wiring for the four-step flow (build → simulate → sign auth → submit) and simple UI/console outputs so you can trace each stage.
-    ![Demo Video] => look for hackathon submission
+    ![Demo Video](https://youtu.be/aj9g_150lnk)
+
+## Live demo (Vercel)
+![Showcase Screenshot](./gasolina_showcase.png)
+
+Try the **showcase app** live on Vercel:
+**[Open the Showcase](https://gasolina-ten.vercel.app/)**
 
 ## SDK functions
 
