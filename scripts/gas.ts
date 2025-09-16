@@ -144,31 +144,31 @@ async function main() {
     //    issuer: USDC_ISSUER,
     //});
     // recipient trustline (if needed)
-    await sponsorAndCreateTrustline({
-        horizonUrl: 'https://horizon-testnet.stellar.org',
-        networkPassphrase,
-        backend: backendKeypair,
-        userPub: recipientG,
-        userSigner: async (xdr: string): Promise<string> => {
-            // Re-hydrate the tx from XDR
-            const tx = TransactionBuilder.fromXDR(xdr, networkPassphrase);
-
-            // If it’s a fee bump, sign the inner tx; else sign the tx directly
-            if (tx instanceof FeeBumpTransaction) {
-                tx.innerTransaction.sign(recipientKeypair);
-                return tx.toXDR();
-            } else {
-                tx.sign(recipientKeypair);
-                return tx.toXDR();
-            }
-
-            // If you prefer to ignore fee-bumps during testing:
-            (tx as any).sign(userKeyPair); return (tx as any).toXDR();
-        },
-
-        code: USDC_CODE,
-        issuer: USDC_ISSUER,
-    });
+    //await sponsorAndCreateTrustline({
+    //    horizonUrl: 'https://horizon-testnet.stellar.org',
+    //    networkPassphrase,
+    //    backend: backendKeypair,
+    //    userPub: recipientG,
+    //    userSigner: async (xdr: string): Promise<string> => {
+    //        // Re-hydrate the tx from XDR
+    //        const tx = TransactionBuilder.fromXDR(xdr, networkPassphrase);
+//
+    //        // If it’s a fee bump, sign the inner tx; else sign the tx directly
+    //        if (tx instanceof FeeBumpTransaction) {
+    //            tx.innerTransaction.sign(recipientKeypair);
+    //            return tx.toXDR();
+    //        } else {
+    //            tx.sign(recipientKeypair);
+    //            return tx.toXDR();
+    //        }
+//
+    //        // If you prefer to ignore fee-bumps during testing:
+    //        (tx as any).sign(userKeyPair); return (tx as any).toXDR();
+    //    },
+//
+    //    code: USDC_CODE,
+    //    issuer: USDC_ISSUER,
+    //});
 
     // --- Router.exec args ---
     // exec(caller: Address, invocations: Vec<(Address, Symbol, Vec<Val>, bool)>)
